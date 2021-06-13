@@ -1,0 +1,60 @@
+pipeline {
+    environment {
+        // 应用名        
+        appName = 'spring-boot-helloworld'
+        // 应用版本 
+        appVersion = '1.0'
+        // docker 镜像仓库地址，build 完成的 docker 会推送至此仓库
+        dockerReg = 'harbo.host.com/public'
+    }
+
+    agent {
+        kubernetes {
+            // 使用 maven-3.6 pod 模板创建pod，并执行操作
+            inheritFrom 'maven-3.6'
+        }
+    }
+
+    stages {
+        
+        stage('pull') {
+            steps {
+                git branch: 'master', url: 'http://gitea.jenkins.svc.cluster.local:3000/gitea/spring-boot-helloworld.git'
+                
+                // 获取 git commit id
+                script {
+                    appCommitId = sh(returnStdout: true, script: 'git rev-parse --short HEAD').trim()
+                    //if (env.BRANCH_NAME != 'master') {
+                    //    appCommitId = "${env.BRANCH_NAME}-${appCommitId}"
+                    //}
+                    // env. 表示设置为环境变量, 在脚本可以直接使用 ${dockerTag} 引用
+                    env.dockerTag = "${appName}:${appVersion}-${appCommitId}-${env.BUILD_NUMBER}"
+                }
+
+            }
+        }
+        
+        stage('Build') {
+            steps {
+                container('maven') {
+                    sh 'mvn -B -DskipTests clean package' 
+                }
+            }
+        }
+        
+        stage('Docker build') {
+            steps {
+                container('docker') {
+                    sh 'docker build -t ${dockerTag} .'
+                    sh 'docker push ${dockerTag}'
+                }
+            }
+        }
+        
+        stage('Deploy to K8S') {
+            steps {
+                sh './jenkins/deliver.sh'
+            }
+        }
+    }
+}
